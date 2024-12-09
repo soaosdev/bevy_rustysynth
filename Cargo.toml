@@ -4,6 +4,7 @@ description = "A plugin which adds MIDI file and soundfont audio support to the 
 version = "0.3.0"
 edition = "2021"
 license = "0BSD OR MIT OR Apache-2.0"
+repository = "https://git.exvacuum.dev/bevy_rustysynth"
 
 [dependencies]
 rustysynth = "1.3"
