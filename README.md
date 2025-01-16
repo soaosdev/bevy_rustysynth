@@ -11,6 +11,7 @@ A plugin which adds MIDI file and soundfont audio support to the bevy engine via
 
 | Crate Version | Bevy Version |
 |---            |---           |
+| 0.3           | 0.15         |
 | 0.1-0.2       | 0.14         |
 
 ## Installation
