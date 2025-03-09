@@ -1,18 +1,15 @@
 use std::{
-    io::{self, Cursor},
-    sync::Arc,
-    time::Duration,
+    io::{self, Cursor}, sync::Arc, time::Duration
 };
-
-use async_channel::{Receiver, TryRecvError};
-use bevy::{
-    asset::{io::Reader, AssetLoader, LoadContext},
-    audio::Source,
-    prelude::*,
-    tasks::AsyncComputeTaskPool,
-};
+#[cfg(feature = "kira")]
+use std::future::Future;
+#[cfg(feature = "bevy_audio")]
+use bevy::prelude::*;
+use bevy::asset::{io::Reader, AssetLoader, LoadContext};
 use itertools::Itertools;
 use rustysynth::{MidiFile, MidiFileSequencer, SoundFont, Synthesizer, SynthesizerSettings};
+
+use crate::SOUNDFONT;
 
 /// Represents a single MIDI note in a sequence
 #[derive(Clone, Debug)]
@@ -44,159 +41,245 @@ impl Default for MidiNote {
     }
 }
 
-/// MIDI audio asset
-#[derive(Asset, TypePath, Clone, Debug)]
-pub enum MidiAudio {
-    /// Plays audio from a MIDI file
-    File(Vec<u8>),
-    /// Plays a simple sequence of notes
-    Sequence(Vec<MidiNote>),
-}
 
 /// AssetLoader for MIDI files (.mid/.midi)
 #[derive(Default, Debug)]
 pub struct MidiAssetLoader;
 
-impl AssetLoader for MidiAssetLoader {
-    type Asset = MidiAudio;
-
-    type Settings = ();
-
-    type Error = io::Error;
-
-    async fn load(
-        &self,
-        reader: &mut dyn Reader,
-        _settings: &Self::Settings,
-        _load_context: &mut LoadContext<'_>,
-    ) -> Result<Self::Asset, Self::Error> {
-        let mut bytes = vec![];
-        reader.read_to_end(&mut bytes).await?;
-        Ok(MidiAudio::File(bytes))
-    }
-
-    fn extensions(&self) -> &[&str] {
-        &["mid", "midi"]
-    }
-}
-
 /// Decoder for MIDI file playback
 pub struct MidiFileDecoder {
     sample_rate: usize,
-    stream: Receiver<f32>,
+    data: Vec<f32>,
+    #[cfg(feature = "bevy_audio")]
+    index: usize,
 }
 
 impl MidiFileDecoder {
-    /// Construct and begin a new MIDI sequencer with the given MIDI data and soundfont.
-    ///
-    /// The sequencer will push at most 1 second's worth of audio ahead, allowing the decoder to
-    /// be paused without endlessly backing up data forever.
-    pub fn new(midi: MidiAudio, soundfont: Arc<SoundFont>) -> Self {
+    /// Construct and render a MIDI sequence with the given MIDI data and soundfont.
+    pub async fn new(midi_data: Vec<u8>, soundfont: Arc<SoundFont>) -> Self {
         let sample_rate = 44100_usize;
-        let (tx, rx) = async_channel::bounded::<f32>(sample_rate * 2);
-        AsyncComputeTaskPool::get()
-            .spawn(async move {
-                let settings = SynthesizerSettings::new(sample_rate as i32);
-                let mut synthesizer =
-                    Synthesizer::new(&soundfont, &settings).expect("Failed to create synthesizer.");
+        let settings = SynthesizerSettings::new(sample_rate as i32);
+        let synthesizer =
+            Synthesizer::new(&soundfont, &settings).expect("Failed to create synthesizer.");
 
-                match midi {
-                    MidiAudio::File(midi_data) => {
-                        let mut sequencer = MidiFileSequencer::new(synthesizer);
-                        let mut midi_data = Cursor::new(midi_data);
-                        let midi = Arc::new(
-                            MidiFile::new(&mut midi_data).expect("Failed to read midi file."),
-                        );
-                        sequencer.play(&midi, false);
-                        let mut left: Vec<f32> = vec![0_f32; sample_rate];
-                        let mut right: Vec<f32> = vec![0_f32; sample_rate];
-                        while !sequencer.end_of_sequence() {
-                            sequencer.render(&mut left, &mut right);
-                            for value in left.iter().interleave(right.iter()) {
-                                if let Err(_) = tx.send(*value).await {
-                                    return;
-                                };
-                            }
-                        }
-                    }
-                    MidiAudio::Sequence(sequence) => {
-                        for MidiNote {
-                            channel,
-                            preset,
-                            bank,
-                            key,
-                            velocity,
-                            duration,
-                        } in sequence.iter()
-                        {
-                            synthesizer.process_midi_message(*channel, 0xB0, 0x00, *bank);
-                            synthesizer.process_midi_message(*channel, 0xC0, *preset, 0);
-                            synthesizer.note_on(*channel, *key, *velocity);
-                            let note_length =
-                                (sample_rate as f32 * duration.as_secs_f32()) as usize;
-                            let mut left: Vec<f32> = vec![0_f32; note_length];
-                            let mut right: Vec<f32> = vec![0_f32; note_length];
-                            for (left, right) in left.chunks_mut(sample_rate).zip(right.chunks_mut(sample_rate)) {
-                                synthesizer.render(left, right);
-                                for value in left.iter().interleave(right.iter()) {
-                                    if let Err(_) = tx.send(*value).await {
-                                        return;
-                                    };
-                                }
-                            }
-                            synthesizer.note_off(*channel, *key);
-                        }
-                    }
-                }
-
-                tx.close();
-            })
-            .detach();
+        let mut data = Vec::new();
+        let mut sequencer = MidiFileSequencer::new(synthesizer);
+        let mut midi_data = Cursor::new(midi_data);
+        let midi = Arc::new(MidiFile::new(&mut midi_data).expect("Failed to read midi file."));
+        sequencer.play(&midi, false);
+        let mut left: Vec<f32> = vec![0_f32; sample_rate];
+        let mut right: Vec<f32> = vec![0_f32; sample_rate];
+        while !sequencer.end_of_sequence() {
+            sequencer.render(&mut left, &mut right);
+            for value in left.iter().interleave(right.iter()) {
+                data.push(*value);
+            }
+        }
         Self {
             sample_rate,
-            stream: rx,
+            data,
+            #[cfg(feature = "bevy_audio")]
+            index: 0,
+        }
+    }
+
+    /// Render a MIDI sequence with the given soundfont.
+    pub fn new_sequence(midi_sequence: Vec<MidiNote>, soundfont: Arc<SoundFont>) -> Self {
+        let sample_rate = 44100_usize;
+        let settings = SynthesizerSettings::new(sample_rate as i32);
+        let mut synthesizer =
+            Synthesizer::new(&soundfont, &settings).expect("Failed to create synthesizer.");
+
+        let mut data = Vec::new();
+
+        for MidiNote {
+            channel,
+            preset,
+            bank,
+            key,
+            velocity,
+            duration,
+        } in midi_sequence.iter()
+        {
+            synthesizer.process_midi_message(*channel, 0xB0, 0x00, *bank);
+            synthesizer.process_midi_message(*channel, 0xC0, *preset, 0);
+            synthesizer.note_on(*channel, *key, *velocity);
+            let note_length = (sample_rate as f32 * duration.as_secs_f32()) as usize;
+            let mut left: Vec<f32> = vec![0_f32; note_length];
+            let mut right: Vec<f32> = vec![0_f32; note_length];
+            for (left, right) in left
+                .chunks_mut(sample_rate)
+                .zip(right.chunks_mut(sample_rate))
+            {
+                synthesizer.render(left, right);
+                for value in left.iter().interleave(right.iter()) {
+                    data.push(*value);
+                }
+            }
+            synthesizer.note_off(*channel, *key);
+        }
+        Self {
+            sample_rate,
+            data,
+            #[cfg(feature = "bevy_audio")]
+            index: 0,
         }
     }
 }
 
-impl Iterator for MidiFileDecoder {
-    type Item = f32;
+#[cfg(all(feature = "bevy_audio", not(feature = "kira")))]
+/// Asset containing MIDI file data to be used as a `Decodable` audio source
+#[derive(Asset, TypePath, Debug)]
+pub struct MidiAudio(Vec<u8>);
 
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.stream.try_recv() {
-            Ok(value) => Some(value),
-            Err(e) => match e {
-                TryRecvError::Empty => Some(0.0),
-                TryRecvError::Closed => None,
-            },
+#[cfg(all(feature = "bevy_audio", not(feature = "kira")))]
+mod bevy_audio {
+    use super::*;
+    use bevy::audio::{Decodable, Source};
+
+    impl Source for MidiFileDecoder {
+        fn current_frame_len(&self) -> Option<usize> {
+            None
+        }
+
+        fn channels(&self) -> u16 {
+            2
+        }
+
+        fn sample_rate(&self) -> u32 {
+            self.sample_rate as u32
+        }
+
+        fn total_duration(&self) -> Option<std::time::Duration> {
+            None
+        }
+    }
+
+    impl Decodable for MidiAudio {
+        type Decoder = MidiFileDecoder;
+
+        type DecoderItem = <MidiFileDecoder as Iterator>::Item;
+
+        fn decoder(&self) -> Self::Decoder {
+            bevy::tasks::block_on(MidiFileDecoder::new(self.0.clone(), SOUNDFONT.get().unwrap().clone()))
+        }
+    }
+
+    impl AssetLoader for MidiAssetLoader {
+        type Asset = MidiAudio;
+
+        type Settings = ();
+
+        type Error = io::Error;
+
+        async fn load(
+            &self,
+            reader: &mut dyn Reader,
+            _settings: &Self::Settings,
+            _load_context: &mut LoadContext<'_>,
+        ) -> Result<Self::Asset, Self::Error> {
+            let mut bytes = vec![];
+            reader.read_to_end(&mut bytes).await?;
+            Ok(MidiAudio(bytes))
+        }
+
+        fn extensions(&self) -> &[&str] {
+            &["mid", "midi"]
+        }
+    }
+
+    impl Iterator for MidiFileDecoder {
+        type Item = f32;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let result = self.data.get(self.index).copied();
+            self.index += 1;
+            result
         }
     }
 }
 
-impl Source for MidiFileDecoder {
-    fn current_frame_len(&self) -> Option<usize> {
-        None
-    }
-
-    fn channels(&self) -> u16 {
-        2
-    }
-
-    fn sample_rate(&self) -> u32 {
-        self.sample_rate as u32
-    }
-
-    fn total_duration(&self) -> Option<std::time::Duration> {
-        None
-    }
+#[cfg(all(feature = "kira", not(feature = "bevy_audio")))]
+/// Extensions For Rendering MIDI Audio
+pub trait MidiAudioExtensions {
+    /// Renders MIDI audio from orovided data
+    fn from_midi_file(data: Vec<u8>) -> impl Future<Output = Self> + Send;
+    /// Renders MIDI audio from provided note sequence
+    fn from_midi_sequence(sequence: Vec<MidiNote>) -> impl Future<Output = Self> + Send;
 }
 
-impl Decodable for MidiAudio {
-    type Decoder = MidiFileDecoder;
+#[cfg(all(feature = "kira", not(feature = "bevy_audio")))]
+mod kira {
+    use super::*;
+    use bevy_kira_audio::{
+        prelude::{Frame, StaticSoundData, StaticSoundSettings},
+        AudioSource,
+    };
 
-    type DecoderItem = <MidiFileDecoder as Iterator>::Item;
+    impl AssetLoader for MidiAssetLoader {
+        type Asset = AudioSource;
 
-    fn decoder(&self) -> Self::Decoder {
-        MidiFileDecoder::new(self.clone(), crate::SOUNDFONT.get().unwrap().clone())
+        type Settings = ();
+
+        type Error = io::Error;
+
+        async fn load(
+            &self,
+            reader: &mut dyn Reader,
+            _settings: &Self::Settings,
+            _load_context: &mut LoadContext<'_>,
+        ) -> Result<Self::Asset, Self::Error> {
+            let mut bytes = vec![];
+            reader.read_to_end(&mut bytes).await?;
+            Ok(AudioSource::from_midi_file(bytes).await)
+        }
+
+        fn extensions(&self) -> &[&str] {
+            &["mid", "midi"]
+        }
+    }
+
+    impl MidiAudioExtensions for AudioSource {
+        async fn from_midi_file(data: Vec<u8>) -> Self {
+            let decoder = MidiFileDecoder::new(data, SOUNDFONT.get().unwrap().clone()).await;
+            let frames = decoder
+                .data
+                .chunks(2)
+                .map(|sample| Frame::new(sample[0], sample[1]))
+                .collect::<Arc<[_]>>();
+            let sample_rate = decoder.sample_rate as u32;
+            let settings = StaticSoundSettings {
+                ..Default::default()
+            };
+            AudioSource {
+                sound: StaticSoundData {
+                    sample_rate,
+                    frames,
+                    settings,
+                    slice: None,
+                },
+            }
+        }
+
+        async fn from_midi_sequence(sequence: Vec<MidiNote>) -> Self {
+            let decoder = MidiFileDecoder::new_sequence(sequence, SOUNDFONT.get().unwrap().clone());
+            let frames = decoder
+                .data
+                .chunks(2)
+                .map(|sample| Frame::new(sample[0], sample[1]))
+                .collect::<Arc<[_]>>();
+            let sample_rate = decoder.sample_rate as u32;
+            let settings = StaticSoundSettings {
+                ..Default::default()
+            };
+            AudioSource {
+                sound: StaticSoundData {
+                    sample_rate,
+                    frames,
+                    settings,
+                    slice: None,
+                },
+            }
+        }
     }
 }

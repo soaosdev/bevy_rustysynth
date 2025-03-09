@@ -1,13 +1,20 @@
 #![warn(missing_docs)]
-
 //! A plugin which adds MIDI file and soundfont audio support to the [bevy](https://crates.io/crates/bevy) engine via [rustysynth](https://crates.io/crates/rustysynth).
 
-use bevy::{audio::AddAudioSource, prelude::*};
+#[cfg(all(feature = "bevy_audio", feature = "kira"))]
+compile_error!("Cannot compile with both bevy_audio and kira features enabled simultaneously. Please disable one of these features");
+
+use bevy::prelude::*;
 use rustysynth::SoundFont;
 use std::{
-    io::{Cursor, Read},
+    io::Read,
     sync::{Arc, OnceLock},
 };
+#[cfg(feature = "hl4mgm")]
+use std::io::Cursor;
+#[cfg(feature = "bevy_audio")]
+use bevy::audio::AddAudioSource;
+
 
 mod assets;
 pub use assets::*;
@@ -38,8 +45,8 @@ impl<R: Read + Send + Sync + Clone + 'static> Plugin for RustySynthPlugin<R> {
         let _ = SOUNDFONT.set(Arc::new(
             SoundFont::new(&mut self.soundfont.clone()).unwrap(),
         ));
-        app.add_audio_source::<MidiAudio>()
-            .init_asset::<MidiAudio>()
-            .init_asset_loader::<MidiAssetLoader>();
+        app.init_asset_loader::<MidiAssetLoader>();
+        #[cfg(feature = "bevy_audio")]
+        app.init_asset::<MidiAudio>().add_audio_source::<MidiAudio>();
     }
 }

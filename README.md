@@ -7,11 +7,13 @@
 
 A plugin which adds MIDI file and soundfont audio support to the bevy engine via rustysynth.
 
+From version 0.4, the crate has undergone significant rewrites, and now works with the default `bevy_audio` backend (`bevy_audio` feature) OR [`bevy_kira_audio`](https://github.com/NiklasEi/bevy_kira_audio) (`kira` feature)
+
 ## Compatibility
 
 | Crate Version | Bevy Version |
 |---            |---           |
-| 0.3           | 0.15         |
+| 0.3-0.4       | 0.15         |
 | 0.1-0.2       | 0.14         |
 
 ## Installation
@@ -19,13 +21,13 @@ A plugin which adds MIDI file and soundfont audio support to the bevy engine via
 ### crates.io
 ```toml
 [dependencies]
-bevy_rustysynth = "0.2"
+bevy_rustysynth = "0.4"
 ```
 
 ### Using git URL in Cargo.toml
 ```toml
 [dependencies.bevy_rustysynth]
-git = "https://github.com/exvacuum/bevy_rustysynth.git"
+git = "https://git.soaos.dev/bevy_rustysynth.git"
 ```
 
 ## Usage
@@ -47,13 +49,22 @@ fn main() {
 }
 ```
 Then you can load and play a MIDI like any other audio file:
+
+### `bevy_audio` Example
 ```rs
-let midi_handle = asset_server.load::<MidiAudio>("example.mid");
+let midi_handle = asset_server.load::<MidiAudioSource>("example.mid");
 
 commands.spawn(AudioSourceBundle {
     source: midi_handle,
     ..Default::default()
 });
+```
+
+### `bevy_kira_audio` Example
+```rs
+let midi_handle = asset_server.load::<AudioSource>("example.mid");
+
+audio.play(midi_handle);
 ```
 
 ## License
