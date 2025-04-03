@@ -1,13 +1,15 @@
-use std::{
-    io::{self, Cursor}, sync::Arc, time::Duration
-};
-#[cfg(feature = "kira")]
-use std::future::Future;
+use bevy::asset::{io::Reader, AssetLoader, LoadContext};
 #[cfg(feature = "bevy_audio")]
 use bevy::prelude::*;
-use bevy::asset::{io::Reader, AssetLoader, LoadContext};
 use itertools::Itertools;
 use rustysynth::{MidiFile, MidiFileSequencer, SoundFont, Synthesizer, SynthesizerSettings};
+#[cfg(feature = "kira")]
+use std::future::Future;
+use std::{
+    io::{self, Cursor},
+    sync::Arc,
+    time::Duration,
+};
 
 use crate::SOUNDFONT;
 
@@ -41,7 +43,6 @@ impl Default for MidiNote {
     }
 }
 
-
 /// AssetLoader for MIDI files (.mid/.midi)
 #[derive(Default, Debug)]
 pub struct MidiAssetLoader;
@@ -56,7 +57,7 @@ pub struct MidiFileDecoder {
 
 impl MidiFileDecoder {
     /// Construct and render a MIDI sequence with the given MIDI data and soundfont.
-    pub async fn new(midi_data: Vec<u8>, soundfont: Arc<SoundFont>) -> Self {
+    pub fn new(midi_data: Vec<u8>, soundfont: Arc<SoundFont>) -> Self {
         let sample_rate = 44100_usize;
         let settings = SynthesizerSettings::new(sample_rate as i32);
         let synthesizer =
@@ -161,7 +162,10 @@ mod bevy_audio {
         type DecoderItem = <MidiFileDecoder as Iterator>::Item;
 
         fn decoder(&self) -> Self::Decoder {
-            bevy::tasks::block_on(MidiFileDecoder::new(self.0.clone(), SOUNDFONT.get().unwrap().clone()))
+            MidiFileDecoder::new(
+                self.0.clone(),
+                SOUNDFONT.lock().unwrap().as_ref().unwrap().clone(),
+            )
         }
     }
 
@@ -241,7 +245,8 @@ mod kira {
 
     impl MidiAudioExtensions for AudioSource {
         async fn from_midi_file(data: Vec<u8>) -> Self {
-            let decoder = MidiFileDecoder::new(data, SOUNDFONT.get().unwrap().clone()).await;
+            let decoder =
+                MidiFileDecoder::new(data, SOUNDFONT.lock().unwrap().as_ref().unwrap().clone());
             let frames = decoder
                 .data
                 .chunks(2)
@@ -262,7 +267,10 @@ mod kira {
         }
 
         async fn from_midi_sequence(sequence: Vec<MidiNote>) -> Self {
-            let decoder = MidiFileDecoder::new_sequence(sequence, SOUNDFONT.get().unwrap().clone());
+            let decoder = MidiFileDecoder::new_sequence(
+                sequence,
+                SOUNDFONT.lock().unwrap().as_ref().unwrap().clone(),
+            );
             let frames = decoder
                 .data
                 .chunks(2)

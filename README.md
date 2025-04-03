@@ -2,8 +2,6 @@
 
 ![Crates](https://img.shields.io/crates/v/bevy_rustysynth)
 ![License](https://img.shields.io/badge/license-0BSD%2FMIT%2FApache-blue.svg)
-![Tag](https://img.shields.io/github/v/tag/exvacuum/bevy_rustysynth)
-![Build](https://img.shields.io/github/actions/workflow/status/exvacuum/bevy_rustysynth/rust.yml)
 
 A plugin which adds MIDI file and soundfont audio support to the bevy engine via rustysynth.
 
@@ -12,22 +10,22 @@ From version 0.4, the crate has undergone significant rewrites, and now works wi
 ## Compatibility
 
 | Crate Version | Bevy Version |
-|---            |---           |
-| 0.3-0.4       | 0.15         |
-| 0.1-0.2       | 0.14         |
+| ------------- | ------------ |
+| 0.5           | 0.15         |
+| 0.2           | 0.14         |
 
 ## Installation
 
 ### crates.io
 ```toml
 [dependencies]
-bevy_rustysynth = "0.4"
+bevy_rustysynth = "0.5"
 ```
 
 ### Using git URL in Cargo.toml
 ```toml
 [dependencies.bevy_rustysynth]
-git = "https://git.soaos.dev/bevy_rustysynth.git"
+git = "https://git.soaos.dev/soaos/bevy_rustysynth.git"
 ```
 
 ## Usage
