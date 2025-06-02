@@ -12,7 +12,7 @@ use rustysynth::SoundFont;
 #[cfg(feature = "hl4mgm")]
 use std::io::Cursor;
 use std::{
-    fs::{self, File},
+    fs::File,
     io::Read,
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -31,9 +31,12 @@ lazy_static! {
         Arc::new(Mutex::new(None));
 }
 
+/// Set labels for rustysynth systems
 #[derive(SystemSet, Hash, Clone, PartialEq, Eq, Debug)]
 pub enum RustySynthSet {
+    /// Rustysynth systems used for setup
     Setup,
+    /// Rustysynth systems used during the update loop
     Update,
 }
 

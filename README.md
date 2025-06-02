@@ -11,6 +11,7 @@ From version 0.4, the crate has undergone significant rewrites, and now works wi
 
 | Crate Version | Bevy Version |
 | ------------- | ------------ |
+| 0.6           | 0.16         |
 | 0.5           | 0.15         |
 | 0.2           | 0.14         |
 
@@ -19,7 +20,7 @@ From version 0.4, the crate has undergone significant rewrites, and now works wi
 ### crates.io
 ```toml
 [dependencies]
-bevy_rustysynth = "0.5"
+bevy_rustysynth = "0.6"
 ```
 
 ### Using git URL in Cargo.toml
@@ -50,12 +51,9 @@ Then you can load and play a MIDI like any other audio file:
 
 ### `bevy_audio` Example
 ```rs
-let midi_handle = asset_server.load::<MidiAudioSource>("example.mid");
+let midi_handle = asset_server.load::<MidiAudio>("example.mid");
 
-commands.spawn(AudioSourceBundle {
-    source: midi_handle,
-    ..Default::default()
-});
+commands.spawn(AudioPlayer(midi_handle));
 ```
 
 ### `bevy_kira_audio` Example
